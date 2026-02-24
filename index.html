@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard IoT con Google Charts</title>
+    <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f7f6;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h2 {
+            color: #333;
+            margin-bottom: 5px;
+            text-align: center;
+        }
+
+        #status {
+            color: #666;
+            font-size: 0.9rem;
+            margin-bottom: 25px;
+        }
+
+        /* Contenedor para los medidores de aguja */
+        .gauges-container {
+            display: flex;
+            gap: 50px;
+            justify-content: center;
+            background-color: #ffffff;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            padding: 20px 40px;
+            margin-bottom: 20px;
+            width: 90%;
+            max-width: 800px;
+        }
+
+        /* Contenedor para los gráficos de líneas */
+        .chart-container {
+            background-color: #ffffff;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+            width: 90%;
+            max-width: 800px;
+        }
+
+        .chart {
+            width: 100%;
+            height: 300px;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>Monitor Ambiental en Tiempo Real</h2>
+    <div id="status">Cargando datos...</div>
+
+    <div class="gauges-container">
+        <div id="gauge_temp"></div>
+        <div id="gauge_hum"></div>
+    </div>
+
+    <div class="chart-container">
+        <div id="chart_temp" class="chart"></div>
+    </div>
+
+    <div class="chart-container">
+        <div id="chart_hum" class="chart"></div>
+    </div>
+
+    <script>
+        // ==========================================
+        // CONFIGURACIÓN DE THINGSPEAK
+        // ==========================================
+        const channelID = 'TU_CHANNEL_ID_AQUI'; 
+        const readAPIKey = '2855692'; 
+        const numeroResultados = 15;
+
+        const url = `https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${readAPIKey}&results=${numeroResultados}`;
+
+        // Cargar los paquetes 'corechart' (líneas) y 'gauge' (agujas)
+        google.charts.load('current', {'packages':['corechart', 'gauge']});
+        google.charts.setOnLoadCallback(iniciarApp);
+
+        function iniciarApp() {
+            fetchThingSpeakData();
+            setInterval(fetchThingSpeakData, 15000); // Refresco cada 15 seg
+        }
+
+        async function fetchThingSpeakData() {
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error("Error en la petición");
+                
+                const data = await response.json();
+                dibujarGraficos(data.feeds);
+                
+                const ahora = new Date().toLocaleTimeString('es-ES');
+                document.getElementById('status').textContent = `Última actualización: ${ahora}`;
+                
+            } catch (error) {
+                console.error("Error:", error);
+                document.getElementById('status').textContent = "Error al obtener los datos.";
+            }
+        }
+
+        function dibujarGraficos(feeds) {
+            if (!feeds || feeds.length === 0) return;
+
+            // ==========================================
+            // 1. DIBUJAR MEDIDORES DE AGUJA (GAUGES)
+            // ==========================================
+            // Tomamos el último registro recibido para el valor actual
+            const ultimoDato = feeds[feeds.length - 1];
+            const tempActual = parseFloat(ultimoDato.field1) || 0;
+            const humActual = parseFloat(ultimoDato.field2) || 0;
+
+            // Gauge Temperatura
+            const dataGaugeTemp = google.visualization.arrayToDataTable([
+                ['Label', 'Value'],
+                ['Temp °C', tempActual]
+            ]);
+            const optionsGaugeTemp = {
+                width: 160, height: 160,
+                min: -10, max: 50, // Rango del termómetro
+                yellowFrom: 30, yellowTo: 40,
+                redFrom: 40, redTo: 50,
+                minorTicks: 5
+            };
+            const chartGaugeTemp = new google.visualization.Gauge(document.getElementById('gauge_temp'));
+            chartGaugeTemp.draw(dataGaugeTemp, optionsGaugeTemp);
+
+            // Gauge Humedad
+            const dataGaugeHum = google.visualization.arrayToDataTable([
+                ['Label', 'Value'],
+                ['Hum %', humActual]
+            ]);
+            const optionsGaugeHum = {
+                width: 160, height: 160,
+                min: 0, max: 100, // Rango de humedad
+                greenFrom: 30, greenTo: 60, // Humedad ideal
+                yellowFrom: 60, yellowTo: 80,
+                redFrom: 80, redTo: 100,
+                minorTicks: 5
+            };
+            const chartGaugeHum = new google.visualization.Gauge(document.getElementById('gauge_hum'));
+            chartGaugeHum.draw(dataGaugeHum, optionsGaugeHum);
+
+            // ==========================================
+            // 2. DIBUJAR HISTÓRICOS DE LÍNEAS
+            // ==========================================
+            const dataTemp = new google.visualization.DataTable();
+            dataTemp.addColumn('datetime', 'Hora');
+            dataTemp.addColumn('number', 'Temperatura');
+
+            const dataHum = new google.visualization.DataTable();
+            dataHum.addColumn('datetime', 'Hora');
+            dataHum.addColumn('number', 'Humedad');
+
+            feeds.forEach(feed => {
+                const fecha = new Date(feed.created_at);
+                const temp = parseFloat(feed.field1);
+                const hum = parseFloat(feed.field2);
+
+                if (!isNaN(temp)) dataTemp.addRow([fecha, temp]);
+                if (!isNaN(hum)) dataHum.addRow([fecha, hum]);
+            });
+
+            const optionsTemp = {
+                title: 'Evolución de la Temperatura',
+                curveType: 'function',
+                colors: ['#ff6b6b'],
+                legend: { position: 'none' },
+                hAxis: { format: 'HH:mm' }
+            };
+
+            const optionsHum = {
+                title: 'Evolución de la Humedad',
+                curveType: 'function',
+                colors: ['#4facfe'],
+                legend: { position: 'none' },
+                hAxis: { format: 'HH:mm' }
+            };
+
+            const chartLineTemp = new google.visualization.LineChart(document.getElementById('chart_temp'));
+            chartLineTemp.draw(dataTemp, optionsTemp);
+
+            const chartLineHum = new google.visualization.LineChart(document.getElementById('chart_hum'));
+            chartLineHum.draw(dataHum, optionsHum);
+        }
+    </script>
+</body>
+</html>
